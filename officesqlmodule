@@ -1,0 +1,300 @@
+Public Function MYSQL(databasename As String) As String
+    Dim mysql_commands As String
+    Dim current_sheet As Integer
+    Dim current_entry As Integer
+    Dim current_column As Integer
+    Dim sheet_count As Integer
+    Dim entry_count As Integer
+    Dim column_count As Integer
+    Dim headertype_list As String
+    Dim headernull_list As String
+    Dim headerkey_list As String
+    Dim current_header As String
+    Dim databaseprefix As String
+    Dim shortprefix As String
+    Dim current_line As String
+    Dim end_line As String
+    Dim current_length As Integer
+    If databasename = "" Then
+        databaseprefix = ""
+        shortprefix = ""
+    Else
+        databaseprefix = "'" & databasename & "'."
+        shortprefix = databasename & "."
+    End If
+    sheet_count = ThisWorkbook.Sheets.Count
+    mysql_commands = ThisWorkbook.Path & "\SQLOffice\sqloffice.txt"
+    If Dir(ThisWorkbook.Path & "\SQLOffice", vbDirectory) = "" Then
+        MkDir (ThisWorkbook.Path & "\SQLOffice")
+    End If
+    Open mysql_commands For Output As #1
+    For current_sheet = 1 To sheet_count
+        'First, check validity
+        Dim valid As String
+        valid = VALIDSQL(current_sheet)
+        If valid <> "No problems detected" Then
+            Close #1
+            MYSQL = valid
+            Exit Function
+        End If
+        'First, get header information
+        headertype_list = ""
+        headernull_list = ""
+        headerkey_list = ""
+        entry_count = ThisWorkbook.Sheets(current_sheet).UsedRange.Rows.Count
+        column_count = COLUMNCOUNT(current_sheet)
+        If column_count > 0 And entry_count > 1 Then
+            'Table is valid, Begin by getting table information
+            For current_column = 1 To column_count
+                current_header = SQLDATATYPE(current_sheet, current_column)
+                If TYPENULL(current_header) Then
+                    headernull_list = headernull_list & "T"
+                Else
+                    headernull_list = headernull_list & "F"
+                End If
+                If ThisWorkbook.Sheets(current_sheet).Cells(1, current_column).Font.Bold Then
+                        headerkey_list = headerkey_list & "T"
+                    Else
+                        headerkey_list = headerkey_list & "F"
+                    End If
+                headertype_list = headertype_list & Left(current_header, 1)
+            Next current_column
+            If InStr(headerkey_list, "T") = 0 Then
+                If InStr(headernull_list, "F") = 0 Then
+                    headernull_list = "F" & Right(headernull_list, Len(headernull_list) - 1)
+                End If
+                headerkey_list = Left(headerkey_list, InStr(1, headernull_list, "F") - 1) & "T" & Right(headerkey_list, Len(headerkey_list) - InStr(1, headernull_list, "F"))
+            End If
+            'Add the MYSQL CREATE TABLE function
+            Print #1, "CREATE TABLE " & databaseprefix & "'" & VALIDNAME(ThisWorkbook.Sheets(current_sheet).name) & "' ("
+            end_line = "PRIMARY KEY ("
+            For current_column = 1 To column_count
+                current_line = vbTab & "'" & VALIDNAME(ThisWorkbook.Sheets(current_sheet).Cells(1, current_column).Value) & "' "
+                If Mid(headertype_list, current_column, 1) = "V" Then
+                    current_length = VARCHARLEN(current_sheet, current_column)
+                    If Mid(headerkey_list, current_column, 1) = "T" Then
+                        current_line = current_line & "VARCHAR(32) "
+                    Else
+                        If current_length > 64 Then
+                            current_line = current_line & "TEXT "
+                        Else
+                            current_line = current_line & "VARCHAR(" & current_length & ") "
+                        End If
+                    End If
+                End If
+                If Mid(headertype_list, current_column, 1) = "I" Then
+                    current_line = current_line & "INT "
+                End If
+                If Mid(headertype_list, current_column, 1) = "D" Then
+                    current_line = current_line & "DECIMAL(20,10) "
+                End If
+                If Mid(headertype_list, current_column, 1) = "B" Then
+                    current_line = current_line & "BOOLEAN "
+                End If
+                If Mid(headernull_list, current_column, 1) = "T" Then
+                    current_line = current_line & "NULL,"
+                Else
+                    current_line = current_line & "NOT NULL,"
+                End If
+                Print #1, current_line
+                If Mid(headerkey_list, current_column, 1) = "T" Then
+                    end_line = end_line & "'" & VALIDNAME(ThisWorkbook.Sheets(current_sheet).Cells(1, current_column).Value) & "',"
+                End If
+            Next current_column
+            Print #1, vbTab & Left(end_line, Len(end_line) - 1) & "));"
+            'CREATE TABLE command is finished, now, for populating the table
+            current_line = "INSERT INTO " & shortprefix & VALIDNAME(ThisWorkbook.Sheets(current_sheet).name) & "("
+            For current_column = 1 To column_count
+                current_line = current_line & VALIDNAME(ThisWorkbook.Sheets(current_sheet).Cells(1, current_column).Value) & ","
+            Next current_column
+            current_line = Left(current_line, Len(current_line) - 1) & ")"
+            For current_entry = 2 To entry_count 'Each iteration adds an INSERT INTO command to the document
+                end_line = vbTab & "VALUES ("
+                For current_column = 1 To column_count
+                    If Mid(headertype_list, current_column, 1) = "V" Then
+                        end_line = end_line & """" & Replace(Replace(ThisWorkbook.Sheets(current_sheet).Cells(current_entry, current_column).Value, "\", "\\"), """", "\""") & ""","
+                    Else
+                        If IsEmpty(ThisWorkbook.Sheets(current_sheet).Cells(current_entry, current_column).Value) Then
+                            If Mid(headerkey_list, current_column, 1) = "T" Then
+                                end_line = end_line & "0,"
+                            Else
+                                end_line = end_line & "NULL,"
+                            End If
+                        Else
+                            end_line = end_line & ThisWorkbook.Sheets(current_sheet).Cells(current_entry, current_column).Value & ","
+                        End If
+                    End If
+                Next
+                Print #1, current_line
+                Print #1, Left(end_line, Len(end_line) - 1) & ");"
+            Next current_entry
+        End If
+    Next current_sheet
+    Close #1
+    If ActiveCell.Row = ActiveSheet.UsedRange.Rows.Count Then
+        MYSQL = "You should move this to the side of the table"
+    Else
+        MYSQL = mysql_commands
+    End If
+End Function
+
+Public Function SQLDATATYPE(sheet As Integer, column As Integer) As String
+    Dim current_row As Integer
+    Dim running As Boolean
+    Dim isboolean As Boolean
+    Dim isinteger As Boolean
+    Dim isdouble As Boolean
+    Dim isnull As Boolean
+    Dim row_count As Integer
+    running = True
+    isboolean = True
+    isinteger = True
+    isdouble = True
+    isnull = False
+    row_count = ThisWorkbook.Sheets(sheet).UsedRange.Rows.Count
+    For current_row = 2 To row_count
+        If IsEmpty(ThisWorkbook.Sheets(sheet).Cells(current_row, column)) Then
+            isnull = True
+        Else
+            If IsNumeric(ThisWorkbook.Sheets(sheet).Cells(current_row, column)) And isdouble Then
+                If InStr(1, ThisWorkbook.Sheets(sheet).Cells(current_row, column), ".") Then
+                    isboolean = False
+                    isinteger = False
+                Else
+                    If ThisWorkbook.Sheets(sheet).Cells(current_row, column) > 1 Or ThisWorkbook.Sheets(sheet).Cells(current_row, column) < 0 Then
+                        isboolean = False
+                    End If
+                End If
+            Else
+                isboolean = False
+                isinteger = False
+                isdouble = False
+            End If
+        End If
+    Next current_row
+    If isboolean Then
+        If isnull Then
+            SQLDATATYPE = "BOOLEAN NULL"
+            Exit Function
+        End If
+        SQLDATATYPE = "BOOLEAN NOT NULL"
+        Exit Function
+    End If
+    If isinteger Then
+        If isnull Then
+            SQLDATATYPE = "INT NULL"
+            Exit Function
+        End If
+        SQLDATATYPE = "INT NOT NULL"
+        Exit Function
+    End If
+    If isdouble Then
+        If isnull Then
+            SQLDATATYPE = "DECIMAL(20,10) NULL"
+            Exit Function
+        End If
+        SQLDATATYPE = "DECIMAL(20,10) NOT NULL"
+        Exit Function
+    End If
+    If isnull Then
+        SQLDATATYPE = "VARCHAR(45) NULL"
+        Exit Function
+    End If
+    SQLDATATYPE = "VARCHAR(45) NOT NULL"
+End Function
+
+Public Function TYPENULL(datatype As String) As Boolean
+    If Right(datatype, 8) = "NOT NULL" Then
+        TYPENULL = False
+    Else
+        TYPENULL = True
+    End If
+End Function
+
+Public Function TYPESHORT(datatype As String) As String
+    TYPESHORT = Left(datatype, InStr(1, datatype, " "))
+End Function
+
+Public Function COLUMNCOUNT(sheet As Integer) As Integer
+    Dim current_column As Integer
+    Dim running As Boolean
+    current_column = 1
+    running = True
+    While running
+        If VALIDNAME(ThisWorkbook.Sheets(sheet).Cells(1, current_column)) = "" Then
+            COLUMNCOUNT = current_column - 1
+            Exit Function
+        End If
+        current_column = current_column + 1
+    Wend
+End Function
+
+Public Function VALIDNAME(tablename As String) As String
+    Dim i As Integer
+    Dim result As String
+    For i = 1 To Len(tablename)
+        Select Case Asc(Mid(tablename, i, 1))
+            Case 65 To 90, 97 To 122:
+                result = result & Mid(tablename, i, 1)
+        End Select
+    Next
+    VALIDNAME = result
+End Function
+
+Public Function VARCHARLEN(current_sheet As Integer, column As Integer) As Integer
+    Dim entry_count As Integer
+    Dim current_entry As Integer
+    Dim length As Integer
+    Dim current_length As Integer
+    entry_count = ThisWorkbook.Sheets(current_sheet).UsedRange.Rows.Count
+    length = 0
+    For current_entry = 2 To entry_count
+        current_length = Len(ThisWorkbook.Sheets(current_sheet).Cells(current_entry, column).Value)
+        If current_length > length Then length = current_length
+    Next current_entry
+    VARCHARLEN = length
+End Function
+
+Public Function VALIDSQL(current_sheet As Integer) As String
+    Dim keylist As String
+    Dim entry_count As Integer
+    Dim current_entry As Integer
+    Dim compare_entry As Integer
+    Dim column_count As Integer
+    Dim current_column As Integer
+    column_count = COLUMNCOUNT(current_sheet)
+    keylist = ""
+    For current_column = 1 To column_count
+        If ThisWorkbook.Sheets(current_sheet).Cells(1, current_column).Font.Bold Then
+            keylist = keylist & "T"
+        Else
+            keylist = keylist & "F"
+        End If
+    Next current_column
+    entry_count = ThisWorkbook.Sheets(current_sheet).UsedRange.Rows.Count
+    For current_entry = 1 To entry_count
+        compare_entry = current_entry + 1
+        If compare_entry <= entry_count Then
+            For compare_entry = compare_entry To entry_count
+                If ROWCOPY(keylist, current_sheet, current_entry, compare_entry) Then
+                    VALIDSQL = "Copy found at rows " & current_entry & " and " & compare_entry & " in table '" & ThisWorkbook.Sheets(current_sheet).name & "'."
+                    Exit Function
+                End If
+            Next compare_entry
+        End If
+    Next current_entry
+    VALIDSQL = "No problems detected"
+End Function
+
+Public Function ROWCOPY(keylist As String, current_sheet As Integer, firstentry As Integer, secondentry As Integer) As Boolean
+    Dim i As Integer
+    For i = 1 To Len(keylist)
+        If Mid(keylist, i, 1) = "T" Then
+            If ThisWorkbook.Sheets(current_sheet).Cells(firstentry, i).Value <> ThisWorkbook.Sheets(current_sheet).Cells(secondentry, i).Value Then
+                ROWCOPY = False
+                Exit Function
+            End If
+        End If
+    Next
+    ROWCOPY = True
+End Function
